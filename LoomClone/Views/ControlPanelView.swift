@@ -49,6 +49,13 @@ struct ControlPanelView: View {
                     }.labelsHidden().onChange(of: cameraManager.selectedCamera) { if let c = $0 { cameraManager.switchCamera(to: c) } }
                     Spacer()
                 }
+                HStack {
+                    Image(systemName: "mic.fill").foregroundColor(.secondary).frame(width: 24)
+                    Text("Microphone").foregroundColor(.secondary)
+                    Spacer()
+                    AudioLevelMeter(level: screenCaptureManager.audioLevel)
+                        .frame(width: 100, height: 8)
+                }
             }.padding().background(RoundedRectangle(cornerRadius: 12).fill(Color(nsColor: .controlBackgroundColor)))
 
             HStack(spacing: 20) {
@@ -70,5 +77,28 @@ struct ControlPanelView: View {
         Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { timer in
             if let c = countdown, c > 1 { countdown = c - 1 } else { timer.invalidate(); countdown = nil; Task { await recordingCoordinator.startRecording() } }
         }
+    }
+}
+
+struct AudioLevelMeter: View {
+    let level: Float
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(Color.gray.opacity(0.3))
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(levelColor)
+                    .frame(width: geo.size.width * CGFloat(level))
+                    .animation(.easeOut(duration: 0.05), value: level)
+            }
+        }
+    }
+
+    private var levelColor: Color {
+        if level > 0.8 { return .red }
+        if level > 0.5 { return .yellow }
+        return .green
     }
 }

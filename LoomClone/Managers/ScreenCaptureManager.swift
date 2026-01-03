@@ -10,10 +10,12 @@ class ScreenCaptureManager: NSObject, ObservableObject {
     @Published var permissionGranted = false
     @Published var isCapturing = false
     @Published var errorMessage: String?
+    @Published var audioLevel: Float = 0  // 0.0 to 1.0
 
     private var stream: SCStream?
     private var streamOutput: CaptureStreamOutput?
     var frameHandler: ((CMSampleBuffer) -> Void)?
+    var audioHandler: ((CMSampleBuffer) -> Void)?
 
     override init() {
         super.init()
@@ -64,12 +66,22 @@ class ScreenCaptureManager: NSObject, ObservableObject {
         config.queueDepth = 5
         config.pixelFormat = kCVPixelFormatType_32BGRA
         config.showsCursor = true
-        config.capturesAudio = true
+        config.capturesAudio = false  // Disabled - only using microphone
+        if #available(macOS 15.0, *) {
+            config.captureMicrophone = true
+        }
         let stream = SCStream(filter: filter, configuration: config, delegate: nil)
         let output = CaptureStreamOutput()
         output.frameHandler = frameHandler
+        output.audioHandler = audioHandler
+        output.audioLevelHandler = { [weak self] level in
+            Task { @MainActor in self?.audioLevel = level }
+        }
         try stream.addStreamOutput(output, type: .screen, sampleHandlerQueue: DispatchQueue(label: "com.loomclone.screen.output"))
-        try stream.addStreamOutput(output, type: .audio, sampleHandlerQueue: DispatchQueue(label: "com.loomclone.audio.output"))
+        // Only microphone audio (no system audio)
+        if #available(macOS 15.0, *) {
+            try stream.addStreamOutput(output, type: .microphone, sampleHandlerQueue: DispatchQueue(label: "com.loomclone.mic.output"))
+        }
         self.streamOutput = output
         self.stream = stream
         try await stream.startCapture()
@@ -102,13 +114,41 @@ class ScreenCaptureManager: NSObject, ObservableObject {
 class CaptureStreamOutput: NSObject, SCStreamOutput {
     var frameHandler: ((CMSampleBuffer) -> Void)?
     var audioHandler: ((CMSampleBuffer) -> Void)?
+    var audioLevelHandler: ((Float) -> Void)?
+    private var micCount = 0
 
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
         switch type {
         case .screen: frameHandler?(sampleBuffer)
-        case .audio: audioHandler?(sampleBuffer)
-        case .microphone: audioHandler?(sampleBuffer)
+        case .microphone:
+            micCount += 1
+            if micCount % 100 == 1 { print("[Stream] Microphone sample #\(micCount)") }
+            audioHandler?(sampleBuffer)
+            // Calculate audio level for meter
+            if let level = calculateAudioLevel(from: sampleBuffer) {
+                audioLevelHandler?(level)
+            }
+        case .audio: break  // System audio disabled
         @unknown default: break
         }
+    }
+
+    private func calculateAudioLevel(from sampleBuffer: CMSampleBuffer) -> Float? {
+        guard let blockBuffer = CMSampleBufferGetDataBuffer(sampleBuffer) else { return nil }
+        var length = 0
+        var dataPointer: UnsafeMutablePointer<Int8>?
+        CMBlockBufferGetDataPointer(blockBuffer, atOffset: 0, lengthAtOffsetOut: nil, totalLengthOut: &length, dataPointerOut: &dataPointer)
+        guard let data = dataPointer else { return nil }
+
+        // Calculate RMS (root mean square) of audio samples
+        let samples = data.withMemoryRebound(to: Int16.self, capacity: length / 2) { ptr in
+            Array(UnsafeBufferPointer(start: ptr, count: length / 2))
+        }
+        guard !samples.isEmpty else { return nil }
+
+        let sumOfSquares = samples.reduce(0.0) { $0 + Double($1) * Double($1) }
+        let rms = sqrt(sumOfSquares / Double(samples.count))
+        let level = Float(rms / 32768.0)  // Normalize to 0-1
+        return min(level * 3, 1.0)  // Amplify for better visibility, cap at 1.0
     }
 }

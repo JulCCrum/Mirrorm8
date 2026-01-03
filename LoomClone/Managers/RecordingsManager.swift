@@ -21,7 +21,7 @@ class RecordingsManager: ObservableObject {
             try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             do {
                 let fileURLs = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.creationDateKey, .fileSizeKey], options: [.skipsHiddenFiles])
-                let recordings = fileURLs.filter { $0.pathExtension.lowercased() == "mp4" }.compactMap { self.createRecording(from: $0) }.sorted { $0.createdAt > $1.createdAt }
+                let recordings = fileURLs.filter { ["mp4", "mov"].contains($0.pathExtension.lowercased()) }.compactMap { self.createRecording(from: $0) }.sorted { $0.createdAt > $1.createdAt }
                 DispatchQueue.main.async { self.recordings = recordings; self.isLoading = false }
             } catch { print("Error loading recordings: \(error)"); DispatchQueue.main.async { self.isLoading = false } }
         }

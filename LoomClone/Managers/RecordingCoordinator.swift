@@ -26,12 +26,13 @@ class RecordingCoordinator: NSObject, ObservableObject {
         self.cameraManager = cameraManager
         self.screenCaptureManager = screenCaptureManager
         screenCaptureManager.frameHandler = { [weak self] sampleBuffer in self?.handleScreenFrame(sampleBuffer) }
+        screenCaptureManager.audioHandler = { [weak self] sampleBuffer in self?.handleAudioFrame(sampleBuffer) }
     }
 
     func startRecording() async {
         guard !isRecording else { return }
         do {
-            let filename = "Recording_\(Date().formatted(.iso8601.year().month().day().time(includingFractionalSeconds: false))).mp4".replacingOccurrences(of: ":", with: "-")
+            let filename = "Recording_\(Date().formatted(.iso8601.year().month().day().time(includingFractionalSeconds: false))).mov".replacingOccurrences(of: ":", with: "-")
             let outputURL = RecordingsManager.recordingsDirectory.appendingPathComponent(filename)
             currentOutputURL = outputURL
             try FileManager.default.createDirectory(at: RecordingsManager.recordingsDirectory, withIntermediateDirectories: true)
@@ -62,7 +63,7 @@ class RecordingCoordinator: NSObject, ObservableObject {
 
     private func setupAssetWriter(outputURL: URL) throws {
         try? FileManager.default.removeItem(at: outputURL)
-        let writer = try AVAssetWriter(outputURL: outputURL, fileType: .mp4)
+        let writer = try AVAssetWriter(outputURL: outputURL, fileType: .mov)
         guard let display = screenCaptureManager?.selectedDisplay else { throw RecordingError.noDisplaySelected }
         let width = Int(display.width) * 2
         let height = Int(display.height) * 2
@@ -71,10 +72,18 @@ class RecordingCoordinator: NSObject, ObservableObject {
         videoInput.expectsMediaDataInRealTime = true
         let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: videoInput, sourcePixelBufferAttributes: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA, kCVPixelBufferWidthKey as String: width, kCVPixelBufferHeightKey as String: height])
         if writer.canAdd(videoInput) { writer.add(videoInput) }
-        let audioSettings: [String: Any] = [AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: 48000, AVNumberOfChannelsKey: 2, AVEncoderBitRateKey: 128000]
-        let audioInput = AVAssetWriterInput(mediaType: .audio, outputSettings: audioSettings)
+
+        // Create audio input BEFORE startWriting() - this is critical!
+        // Use nil outputSettings to pass through audio without re-encoding (accepts any format)
+        let audioInput = AVAssetWriterInput(mediaType: .audio, outputSettings: nil)
         audioInput.expectsMediaDataInRealTime = true
-        if writer.canAdd(audioInput) { writer.add(audioInput) }
+        if writer.canAdd(audioInput) {
+            writer.add(audioInput)
+            print("[Setup] Audio input added successfully BEFORE startWriting (passthrough mode)")
+        } else {
+            print("[Setup] WARNING: Could not add audio input")
+        }
+
         self.assetWriter = writer
         self.videoInput = videoInput
         self.audioInput = audioInput
@@ -87,10 +96,37 @@ class RecordingCoordinator: NSObject, ObservableObject {
         writerQueue.async { [weak self] in
             guard let self = self, let writer = self.assetWriter, let videoInput = self.videoInput, let adaptor = self.pixelBufferAdaptor else { return }
             let presentationTime = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
-            if self.recordingStartTime == nil { self.recordingStartTime = presentationTime; writer.startSession(atSourceTime: presentationTime) }
+
+            // Start session on first frame
+            if self.recordingStartTime == nil {
+                self.recordingStartTime = presentationTime
+                writer.startSession(atSourceTime: presentationTime)
+                print("[Video] Session started at \(presentationTime.seconds)")
+            }
+
             guard videoInput.isReadyForMoreMediaData, let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
             adaptor.append(pixelBuffer, withPresentationTime: presentationTime)
             self.lastVideoTime = presentationTime
+        }
+    }
+
+    private var audioFrameCount = 0
+
+    private func handleAudioFrame(_ sampleBuffer: CMSampleBuffer) {
+        guard isRecording, !isPaused else { return }
+        writerQueue.async { [weak self] in
+            guard let self = self else { return }
+
+            // Wait for session to start before appending audio
+            guard self.recordingStartTime != nil else { return }
+            guard let audioInput = self.audioInput else { return }
+            guard audioInput.isReadyForMoreMediaData else { return }
+
+            audioInput.append(sampleBuffer)
+            self.audioFrameCount += 1
+            if self.audioFrameCount % 100 == 0 {
+                print("[Audio] Appended \(self.audioFrameCount) audio frames")
+            }
         }
     }
 
@@ -102,7 +138,7 @@ class RecordingCoordinator: NSObject, ObservableObject {
                 self?.audioInput?.markAsFinished()
                 writer.finishWriting {
                     DispatchQueue.main.async {
-                        self?.assetWriter = nil; self?.videoInput = nil; self?.audioInput = nil; self?.pixelBufferAdaptor = nil; self?.recordingStartTime = nil; self?.lastVideoTime = nil
+                        self?.assetWriter = nil; self?.videoInput = nil; self?.audioInput = nil; self?.pixelBufferAdaptor = nil; self?.recordingStartTime = nil; self?.lastVideoTime = nil; self?.audioFrameCount = 0
                         continuation.resume()
                     }
                 }
