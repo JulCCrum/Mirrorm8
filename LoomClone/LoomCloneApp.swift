@@ -19,7 +19,8 @@ struct LoomCloneApp: App {
                 .onAppear {
                     recordingCoordinator.setup(
                         cameraManager: cameraManager,
-                        screenCaptureManager: screenCaptureManager
+                        screenCaptureManager: screenCaptureManager,
+                        recordingsManager: recordingsManager
                     )
                     if showOverlay {
                         CameraOverlayWindowController.shared.showWindow(cameraManager: cameraManager)
@@ -46,6 +47,7 @@ struct LoomCloneApp: App {
             SettingsView()
                 .environmentObject(cameraManager)
                 .environmentObject(screenCaptureManager)
+                .environmentObject(recordingsManager)
         }
     }
 }

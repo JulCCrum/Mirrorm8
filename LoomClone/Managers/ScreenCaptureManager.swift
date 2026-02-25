@@ -11,6 +11,7 @@ class ScreenCaptureManager: NSObject, ObservableObject {
     @Published var isCapturing = false
     @Published var errorMessage: String?
     @Published var audioLevel: Float = 0  // 0.0 to 1.0
+    @Published var audioLevelHistory: [Float] = Array(repeating: 0, count: 20)
 
     private var stream: SCStream?
     private var streamOutput: CaptureStreamOutput?
@@ -75,7 +76,13 @@ class ScreenCaptureManager: NSObject, ObservableObject {
         output.frameHandler = frameHandler
         output.audioHandler = audioHandler
         output.audioLevelHandler = { [weak self] level in
-            Task { @MainActor in self?.audioLevel = level }
+            Task { @MainActor in
+                self?.audioLevel = level
+                self?.audioLevelHistory.append(level)
+                if (self?.audioLevelHistory.count ?? 0) > 20 {
+                    self?.audioLevelHistory.removeFirst()
+                }
+            }
         }
         try stream.addStreamOutput(output, type: .screen, sampleHandlerQueue: DispatchQueue(label: "com.loomclone.screen.output"))
         // Only microphone audio (no system audio)

@@ -53,8 +53,8 @@ struct ControlPanelView: View {
                     Image(systemName: "mic.fill").foregroundColor(.secondary).frame(width: 24)
                     Text("Microphone").foregroundColor(.secondary)
                     Spacer()
-                    AudioLevelMeter(level: screenCaptureManager.audioLevel)
-                        .frame(width: 100, height: 8)
+                    AudioWaveformView(levels: screenCaptureManager.audioLevelHistory)
+                        .frame(width: 160, height: 36)
                 }
             }.padding().background(RoundedRectangle(cornerRadius: 12).fill(Color(nsColor: .controlBackgroundColor)))
 
@@ -77,6 +77,35 @@ struct ControlPanelView: View {
         Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { timer in
             if let c = countdown, c > 1 { countdown = c - 1 } else { timer.invalidate(); countdown = nil; Task { await recordingCoordinator.startRecording() } }
         }
+    }
+}
+
+struct AudioWaveformView: View {
+    let levels: [Float]
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 2) {
+            ForEach(Array(levels.enumerated()), id: \.offset) { _, level in
+                VStack(spacing: 1) {
+                    // Upper bars (main)
+                    RoundedRectangle(cornerRadius: 1.5)
+                        .fill(barColor(for: level))
+                        .frame(width: 5, height: max(2, CGFloat(level) * 18))
+                        .animation(.spring(response: 0.15, dampingFraction: 0.7), value: level)
+                    // Lower bars (reflection)
+                    RoundedRectangle(cornerRadius: 1.5)
+                        .fill(barColor(for: level).opacity(0.3))
+                        .frame(width: 5, height: max(1, CGFloat(level) * 8))
+                        .animation(.spring(response: 0.15, dampingFraction: 0.7), value: level)
+                }
+            }
+        }
+    }
+
+    private func barColor(for level: Float) -> Color {
+        if level > 0.8 { return .red }
+        if level > 0.5 { return .yellow }
+        return .green
     }
 }
 

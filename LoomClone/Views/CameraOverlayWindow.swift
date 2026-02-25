@@ -33,7 +33,8 @@ class CameraOverlayWindowController {
     }
 
     private func createWindow() {
-        let size: CGFloat = 200
+        let savedDiameter = UserDefaults.standard.double(forKey: "customOverlayDiameter")
+        let size: CGFloat = savedDiameter > 0 ? CGFloat(savedDiameter) : 200
         let screenFrame = NSScreen.main?.visibleFrame ?? .zero
         let frame = NSRect(x: screenFrame.maxX - size - 40, y: screenFrame.minY + 40, width: size, height: size)
         let panel = DraggablePanel(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
@@ -42,7 +43,8 @@ class CameraOverlayWindowController {
         panel.backgroundColor = .clear
         panel.hasShadow = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        panel.isMovableByWindowBackground = true
+        panel.isMovableByWindowBackground = false
+        panel.acceptsMouseMovedEvents = true
 
         let preview = OverlayCameraPreviewView(frame: NSRect(x: 0, y: 0, width: size, height: size))
         preview.autoresizingMask = [.width, .height]
@@ -173,11 +175,101 @@ class OverlayCameraPreviewView: NSView {
 class DraggablePanel: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
-    private var initialMouse: NSPoint?; private var initialOrigin: NSPoint?
-    override func mouseDown(with e: NSEvent) { initialMouse = NSEvent.mouseLocation; initialOrigin = frame.origin }
+
+    private var initialMouse: NSPoint?
+    private var initialOrigin: NSPoint?
+    private var isResizing = false
+    private var initialDiameter: CGFloat = 0
+    private var initialCenter: NSPoint = .zero
+
+    @AppStorage("customOverlayDiameter") private var savedDiameter: Double = 200
+
+    private static let edgeThreshold: CGFloat = 15
+    private static let minDiameter: CGFloat = 100
+    private static let maxDiameter: CGFloat = 500
+
+    private var circleCenter: NSPoint {
+        NSPoint(x: frame.origin.x + frame.width / 2, y: frame.origin.y + frame.height / 2)
+    }
+
+    private func isNearEdge(_ screenPoint: NSPoint) -> Bool {
+        let center = circleCenter
+        let radius = frame.width / 2
+        let dx = screenPoint.x - center.x
+        let dy = screenPoint.y - center.y
+        let distance = sqrt(dx * dx + dy * dy)
+        return abs(distance - radius) < Self.edgeThreshold
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        let mouseLocation = NSEvent.mouseLocation
+        if isNearEdge(mouseLocation) {
+            NSCursor.resizeUpDown.set()
+        } else {
+            NSCursor.arrow.set()
+        }
+    }
+
+    override func mouseDown(with e: NSEvent) {
+        let mouseLocation = NSEvent.mouseLocation
+        initialMouse = mouseLocation
+        initialOrigin = frame.origin
+
+        if isNearEdge(mouseLocation) {
+            isResizing = true
+            initialDiameter = frame.width
+            initialCenter = circleCenter
+        } else {
+            isResizing = false
+        }
+    }
+
     override func mouseDragged(with e: NSEvent) {
-        guard let im = initialMouse, let io = initialOrigin else { return }
+        guard let im = initialMouse else { return }
         let cm = NSEvent.mouseLocation
-        setFrameOrigin(NSPoint(x: io.x + cm.x - im.x, y: io.y + cm.y - im.y))
+
+        if isResizing {
+            // Calculate distance from initial center to current mouse
+            let dx = cm.x - initialCenter.x
+            let dy = cm.y - initialCenter.y
+            let currentDistance = sqrt(dx * dx + dy * dy)
+
+            // Calculate distance from initial center to initial mouse
+            let idx = im.x - initialCenter.x
+            let idy = im.y - initialCenter.y
+            let initialDistance = sqrt(idx * idx + idy * idy)
+
+            // Scale diameter based on ratio of distances
+            let scale = initialDistance > 0 ? currentDistance / initialDistance : 1
+            let newDiameter = min(max(initialDiameter * scale, Self.minDiameter), Self.maxDiameter)
+
+            // Keep centered
+            let newOrigin = NSPoint(
+                x: initialCenter.x - newDiameter / 2,
+                y: initialCenter.y - newDiameter / 2
+            )
+            let newFrame = NSRect(x: newOrigin.x, y: newOrigin.y, width: newDiameter, height: newDiameter)
+            setFrame(newFrame, display: true)
+            savedDiameter = Double(newDiameter)
+        } else {
+            guard let io = initialOrigin else { return }
+            setFrameOrigin(NSPoint(x: io.x + cm.x - im.x, y: io.y + cm.y - im.y))
+        }
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        if isResizing {
+            savedDiameter = Double(frame.width)
+        }
+        isResizing = false
+        initialMouse = nil
+        initialOrigin = nil
+    }
+
+    func applySavedDiameter() {
+        let diameter = CGFloat(savedDiameter)
+        if diameter != frame.width {
+            CameraOverlayWindowController.shared.updateSize(diameter)
+        }
     }
 }

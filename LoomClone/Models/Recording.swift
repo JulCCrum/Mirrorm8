@@ -7,9 +7,29 @@ struct Recording: Identifiable, Codable, Hashable {
     let duration: TimeInterval
     let fileSize: Int64
     let thumbnailPath: String?
+    var sourceDirectory: URL?
+    var storageLocation: String
+
+    init(id: UUID, filename: String, createdAt: Date, duration: TimeInterval, fileSize: Int64, thumbnailPath: String?, sourceDirectory: URL? = nil, storageLocation: String = "Internal") {
+        self.id = id
+        self.filename = filename
+        self.createdAt = createdAt
+        self.duration = duration
+        self.fileSize = fileSize
+        self.thumbnailPath = thumbnailPath
+        self.sourceDirectory = sourceDirectory
+        self.storageLocation = storageLocation
+    }
 
     var filePath: URL {
-        RecordingsManager.recordingsDirectory.appendingPathComponent(filename)
+        if let dir = sourceDirectory {
+            return dir.appendingPathComponent(filename)
+        }
+        return RecordingsManager.recordingsDirectory.appendingPathComponent(filename)
+    }
+
+    var isAvailable: Bool {
+        FileManager.default.fileExists(atPath: filePath.path)
     }
 
     var formattedDuration: String {

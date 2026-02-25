@@ -12,6 +12,7 @@ class RecordingCoordinator: NSObject, ObservableObject {
 
     private var cameraManager: CameraManager?
     private var screenCaptureManager: ScreenCaptureManager?
+    private var recordingsManager: RecordingsManager?
     private var assetWriter: AVAssetWriter?
     private var videoInput: AVAssetWriterInput?
     private var audioInput: AVAssetWriterInput?
@@ -22,9 +23,10 @@ class RecordingCoordinator: NSObject, ObservableObject {
     private var currentOutputURL: URL?
     private let writerQueue = DispatchQueue(label: "com.loomclone.writer")
 
-    func setup(cameraManager: CameraManager, screenCaptureManager: ScreenCaptureManager) {
+    func setup(cameraManager: CameraManager, screenCaptureManager: ScreenCaptureManager, recordingsManager: RecordingsManager? = nil) {
         self.cameraManager = cameraManager
         self.screenCaptureManager = screenCaptureManager
+        self.recordingsManager = recordingsManager
         screenCaptureManager.frameHandler = { [weak self] sampleBuffer in self?.handleScreenFrame(sampleBuffer) }
         screenCaptureManager.audioHandler = { [weak self] sampleBuffer in self?.handleAudioFrame(sampleBuffer) }
     }
@@ -32,10 +34,11 @@ class RecordingCoordinator: NSObject, ObservableObject {
     func startRecording() async {
         guard !isRecording else { return }
         do {
+            let saveDir = recordingsManager?.activeSaveDirectory ?? RecordingsManager.recordingsDirectory
             let filename = "Recording_\(Date().formatted(.iso8601.year().month().day().time(includingFractionalSeconds: false))).mov".replacingOccurrences(of: ":", with: "-")
-            let outputURL = RecordingsManager.recordingsDirectory.appendingPathComponent(filename)
+            let outputURL = saveDir.appendingPathComponent(filename)
             currentOutputURL = outputURL
-            try FileManager.default.createDirectory(at: RecordingsManager.recordingsDirectory, withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(at: saveDir, withIntermediateDirectories: true)
             try setupAssetWriter(outputURL: outputURL)
             try await screenCaptureManager?.startCapture()
             isRecording = true
