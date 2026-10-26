@@ -22,6 +22,7 @@ class RecordingCoordinator: NSObject, ObservableObject {
     private var durationTimer: Timer?
     private var currentOutputURL: URL?
     private let writerQueue = DispatchQueue(label: "com.loomclone.writer")
+    private var _writerIsPaused = false  // Thread-safe pause flag for writerQueue
 
     func setup(cameraManager: CameraManager, screenCaptureManager: ScreenCaptureManager, recordingsManager: RecordingsManager? = nil) {
         self.cameraManager = cameraManager
@@ -42,7 +43,10 @@ class RecordingCoordinator: NSObject, ObservableObject {
             try setupAssetWriter(outputURL: outputURL)
             try await screenCaptureManager?.startCapture()
             isRecording = true
+            isPaused = false
+            _writerIsPaused = false
             recordingDuration = 0
+            durationTimer?.invalidate()
             durationTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in Task { @MainActor in self?.recordingDuration += 1 } }
         } catch { errorMessage = "Failed to start recording: \(error.localizedDescription)" }
     }
@@ -50,6 +54,8 @@ class RecordingCoordinator: NSObject, ObservableObject {
     func stopRecording() async -> URL? {
         guard isRecording else { return nil }
         isRecording = false
+        isPaused = false
+        _writerIsPaused = false
         durationTimer?.invalidate()
         durationTimer = nil
         await screenCaptureManager?.stopCapture()
@@ -60,8 +66,14 @@ class RecordingCoordinator: NSObject, ObservableObject {
 
     func togglePause() {
         isPaused.toggle()
-        if isPaused { durationTimer?.invalidate() }
-        else { durationTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in Task { @MainActor in self?.recordingDuration += 1 } } }
+        writerQueue.sync { _writerIsPaused = isPaused }
+        if isPaused {
+            durationTimer?.invalidate()
+            durationTimer = nil
+        } else {
+            durationTimer?.invalidate()
+            durationTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in Task { @MainActor in self?.recordingDuration += 1 } }
+        }
     }
 
     private func setupAssetWriter(outputURL: URL) throws {
@@ -95,9 +107,8 @@ class RecordingCoordinator: NSObject, ObservableObject {
     }
 
     private func handleScreenFrame(_ sampleBuffer: CMSampleBuffer) {
-        guard isRecording, !isPaused else { return }
         writerQueue.async { [weak self] in
-            guard let self = self, let writer = self.assetWriter, let videoInput = self.videoInput, let adaptor = self.pixelBufferAdaptor else { return }
+            guard let self = self, !self._writerIsPaused, let writer = self.assetWriter, let videoInput = self.videoInput, let adaptor = self.pixelBufferAdaptor else { return }
             let presentationTime = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
 
             // Start session on first frame
@@ -116,9 +127,8 @@ class RecordingCoordinator: NSObject, ObservableObject {
     private var audioFrameCount = 0
 
     private func handleAudioFrame(_ sampleBuffer: CMSampleBuffer) {
-        guard isRecording, !isPaused else { return }
         writerQueue.async { [weak self] in
-            guard let self = self else { return }
+            guard let self = self, !self._writerIsPaused else { return }
 
             // Wait for session to start before appending audio
             guard self.recordingStartTime != nil else { return }

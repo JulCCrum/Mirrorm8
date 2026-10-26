@@ -2,12 +2,19 @@ import SwiftUI
 import AppKit
 import AVFoundation
 
+@MainActor
 class CameraOverlayWindowController {
     static let shared = CameraOverlayWindowController()
     private var overlayWindow: NSPanel?
     private var cameraManager: CameraManager?
     private var previewView: OverlayCameraPreviewView?
+    private var containerView: ShapedContainerView?
     private init() {}
+
+    var currentShape: CaptureConfiguration.OverlayShape {
+        let raw = UserDefaults.standard.string(forKey: "overlayShape") ?? CaptureConfiguration.OverlayShape.circle.rawValue
+        return CaptureConfiguration.OverlayShape(rawValue: raw) ?? .circle
+    }
 
     func showWindow(cameraManager: CameraManager) {
         self.cameraManager = cameraManager
@@ -33,10 +40,13 @@ class CameraOverlayWindowController {
     }
 
     private func createWindow() {
-        let savedDiameter = UserDefaults.standard.double(forKey: "customOverlayDiameter")
-        let size: CGFloat = savedDiameter > 0 ? CGFloat(savedDiameter) : 200
+        let shape = currentShape
+        let savedWidth = UserDefaults.standard.double(forKey: "overlayWidth")
+        let savedHeight = UserDefaults.standard.double(forKey: "overlayHeight")
+        let width: CGFloat = savedWidth > 0 ? CGFloat(savedWidth) : shape.defaultSize.width
+        let height: CGFloat = savedHeight > 0 ? CGFloat(savedHeight) : shape.defaultSize.height
         let screenFrame = NSScreen.main?.visibleFrame ?? .zero
-        let frame = NSRect(x: screenFrame.maxX - size - 40, y: screenFrame.minY + 40, width: size, height: size)
+        let frame = NSRect(x: screenFrame.maxX - width - 40, y: screenFrame.minY + 40, width: width, height: height)
         let panel = DraggablePanel(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         panel.level = .floating
         panel.isOpaque = false
@@ -46,33 +56,92 @@ class CameraOverlayWindowController {
         panel.isMovableByWindowBackground = false
         panel.acceptsMouseMovedEvents = true
 
-        let preview = OverlayCameraPreviewView(frame: NSRect(x: 0, y: 0, width: size, height: size))
+        let preview = OverlayCameraPreviewView(frame: NSRect(x: 0, y: 0, width: width, height: height), shape: shape)
         preview.autoresizingMask = [.width, .height]
         self.previewView = preview
 
-        let container = CircularContainerView(frame: NSRect(x: 0, y: 0, width: size, height: size))
+        let container = ShapedContainerView(frame: NSRect(x: 0, y: 0, width: width, height: height), shape: shape)
         container.autoresizingMask = [.width, .height]
         container.setPreviewView(preview)
 
         panel.contentView = container
         self.overlayWindow = panel
+        self.containerView = container
+    }
+
+    func updateShape(_ shape: CaptureConfiguration.OverlayShape) {
+        UserDefaults.standard.set(shape.rawValue, forKey: "overlayShape")
+        guard let window = overlayWindow else { return }
+
+        // Update container and preview shapes
+        containerView?.updateShape(shape)
+        previewView?.updateShape(shape)
+
+        // Resize window to default size for the new shape
+        let center = NSPoint(x: window.frame.midX, y: window.frame.midY)
+        let newSize = shape.defaultSize
+        let newFrame = NSRect(
+            x: center.x - newSize.width / 2,
+            y: center.y - newSize.height / 2,
+            width: newSize.width,
+            height: newSize.height
+        )
+        window.setFrame(newFrame, display: true, animate: true)
+        UserDefaults.standard.set(Double(newSize.width), forKey: "overlayWidth")
+        UserDefaults.standard.set(Double(newSize.height), forKey: "overlayHeight")
     }
 
     func updateSize(_ size: CGFloat) {
+        let shape = currentShape
+        if shape == .circle {
+            updateFrame(width: Double(size), height: Double(size))
+        } else {
+            guard let window = overlayWindow else { return }
+            let aspect = window.frame.height / window.frame.width
+            updateFrame(width: Double(size), height: Double(size * aspect))
+        }
+    }
+
+    func updateFrame(width: Double, height: Double) {
         guard let window = overlayWindow else { return }
-        var frame = window.frame; let delta = size - frame.size.width
-        frame.size = CGSize(width: size, height: size); frame.origin.x -= delta / 2; frame.origin.y -= delta / 2
-        window.setFrame(frame, display: true, animate: true)
+        let shape = currentShape
+        let w = CGFloat(width)
+        let h = shape == .circle ? w : CGFloat(height)
+        var frame = window.frame
+        frame.origin.x -= (w - frame.width) / 2
+        frame.origin.y -= (h - frame.height) / 2
+        frame.size = CGSize(width: w, height: h)
+        window.setFrame(frame, display: true)
+        UserDefaults.standard.set(Double(w), forKey: "overlayWidth")
+        UserDefaults.standard.set(Double(h), forKey: "overlayHeight")
     }
 }
 
-class CircularContainerView: NSView {
+class ShapedContainerView: NSView {
     private var contentClipView: NSView?
     private var borderLayer: CAShapeLayer?
     private var maskLayer: CAShapeLayer?
+    private var shape: CaptureConfiguration.OverlayShape
 
-    override init(frame: NSRect) { super.init(frame: frame); wantsLayer = true; setupViews() }
-    required init?(coder: NSCoder) { super.init(coder: coder); wantsLayer = true; setupViews() }
+    init(frame: NSRect, shape: CaptureConfiguration.OverlayShape) {
+        self.shape = shape
+        super.init(frame: frame)
+        wantsLayer = true
+        setupViews()
+    }
+    required init?(coder: NSCoder) {
+        self.shape = .circle
+        super.init(coder: coder)
+        wantsLayer = true
+        setupViews()
+    }
+
+    private func maskPath(for rect: CGRect) -> CGPath {
+        switch shape {
+        case .circle: return CGPath(ellipseIn: rect, transform: nil)
+        case .roundedRect: return CGPath(roundedRect: rect, cornerWidth: shape.cornerRadius, cornerHeight: shape.cornerRadius, transform: nil)
+        }
+    }
 
     private func setupViews() {
         layer?.backgroundColor = NSColor.clear.cgColor
@@ -81,9 +150,8 @@ class CircularContainerView: NSView {
         clip.wantsLayer = true
         clip.layer?.backgroundColor = NSColor.black.cgColor
 
-        // Create mask once and reuse
         let clipMask = CAShapeLayer()
-        clipMask.path = CGPath(ellipseIn: bounds, transform: nil)
+        clipMask.path = maskPath(for: bounds)
         clip.layer?.mask = clipMask
         self.maskLayer = clipMask
 
@@ -96,7 +164,7 @@ class CircularContainerView: NSView {
         self.contentClipView = clip
 
         let border = CAShapeLayer()
-        border.path = CGPath(ellipseIn: bounds.insetBy(dx: 1.5, dy: 1.5), transform: nil)
+        border.path = maskPath(for: bounds.insetBy(dx: 1.5, dy: 1.5))
         border.fillColor = NSColor.clear.cgColor
         border.strokeColor = NSColor.white.withAlphaComponent(0.9).cgColor
         border.lineWidth = 3
@@ -107,9 +175,8 @@ class CircularContainerView: NSView {
     override func layout() {
         super.layout()
         contentClipView?.frame = bounds
-        // Update existing mask path instead of creating new mask
-        maskLayer?.path = CGPath(ellipseIn: bounds, transform: nil)
-        borderLayer?.path = CGPath(ellipseIn: bounds.insetBy(dx: 1.5, dy: 1.5), transform: nil)
+        maskLayer?.path = maskPath(for: bounds)
+        borderLayer?.path = maskPath(for: bounds.insetBy(dx: 1.5, dy: 1.5))
         borderLayer?.frame = bounds
     }
 
@@ -117,13 +184,21 @@ class CircularContainerView: NSView {
         preview.frame = contentClipView?.bounds ?? bounds
         contentClipView?.addSubview(preview)
     }
+
+    func updateShape(_ newShape: CaptureConfiguration.OverlayShape) {
+        shape = newShape
+        maskLayer?.path = maskPath(for: bounds)
+        borderLayer?.path = maskPath(for: bounds.insetBy(dx: 1.5, dy: 1.5))
+    }
 }
 
 class OverlayCameraPreviewView: NSView {
     private var previewLayer: AVCaptureVideoPreviewLayer?
     private var maskLayer: CAShapeLayer?
+    private var shape: CaptureConfiguration.OverlayShape
 
-    override init(frame: NSRect) {
+    init(frame: NSRect, shape: CaptureConfiguration.OverlayShape) {
+        self.shape = shape
         super.init(frame: frame)
         wantsLayer = true
         layer?.backgroundColor = NSColor.black.cgColor
@@ -131,44 +206,48 @@ class OverlayCameraPreviewView: NSView {
     }
 
     required init?(coder: NSCoder) {
+        self.shape = .circle
         super.init(coder: coder)
         wantsLayer = true
         layer?.backgroundColor = NSColor.black.cgColor
         setupMask()
     }
 
+    private func maskPath(for rect: CGRect) -> CGPath {
+        switch shape {
+        case .circle: return CGPath(ellipseIn: rect, transform: nil)
+        case .roundedRect: return CGPath(roundedRect: rect, cornerWidth: shape.cornerRadius, cornerHeight: shape.cornerRadius, transform: nil)
+        }
+    }
+
     private func setupMask() {
         let mask = CAShapeLayer()
-        mask.path = CGPath(ellipseIn: bounds, transform: nil)
+        mask.path = maskPath(for: bounds)
         layer?.mask = mask
         self.maskLayer = mask
     }
 
     func connectToSession(_ session: AVCaptureSession) {
-        // Remove old layer
         previewLayer?.removeFromSuperlayer()
-
-        // Create new preview layer
         let newLayer = AVCaptureVideoPreviewLayer(session: session)
         newLayer.videoGravity = .resizeAspectFill
         newLayer.frame = bounds
-
-        // Insert below mask effects
         if let rootLayer = layer {
             rootLayer.insertSublayer(newLayer, at: 0)
         }
-
         self.previewLayer = newLayer
-
-        // Update mask path
-        maskLayer?.path = CGPath(ellipseIn: bounds, transform: nil)
+        maskLayer?.path = maskPath(for: bounds)
     }
 
     override func layout() {
         super.layout()
         previewLayer?.frame = bounds
-        // Only update path, don't recreate mask
-        maskLayer?.path = CGPath(ellipseIn: bounds, transform: nil)
+        maskLayer?.path = maskPath(for: bounds)
+    }
+
+    func updateShape(_ newShape: CaptureConfiguration.OverlayShape) {
+        shape = newShape
+        maskLayer?.path = maskPath(for: bounds)
     }
 }
 
@@ -178,98 +257,20 @@ class DraggablePanel: NSPanel {
 
     private var initialMouse: NSPoint?
     private var initialOrigin: NSPoint?
-    private var isResizing = false
-    private var initialDiameter: CGFloat = 0
-    private var initialCenter: NSPoint = .zero
-
-    @AppStorage("customOverlayDiameter") private var savedDiameter: Double = 200
-
-    private static let edgeThreshold: CGFloat = 15
-    private static let minDiameter: CGFloat = 100
-    private static let maxDiameter: CGFloat = 500
-
-    private var circleCenter: NSPoint {
-        NSPoint(x: frame.origin.x + frame.width / 2, y: frame.origin.y + frame.height / 2)
-    }
-
-    private func isNearEdge(_ screenPoint: NSPoint) -> Bool {
-        let center = circleCenter
-        let radius = frame.width / 2
-        let dx = screenPoint.x - center.x
-        let dy = screenPoint.y - center.y
-        let distance = sqrt(dx * dx + dy * dy)
-        return abs(distance - radius) < Self.edgeThreshold
-    }
-
-    override func mouseMoved(with event: NSEvent) {
-        let mouseLocation = NSEvent.mouseLocation
-        if isNearEdge(mouseLocation) {
-            NSCursor.resizeUpDown.set()
-        } else {
-            NSCursor.arrow.set()
-        }
-    }
 
     override func mouseDown(with e: NSEvent) {
-        let mouseLocation = NSEvent.mouseLocation
-        initialMouse = mouseLocation
+        initialMouse = NSEvent.mouseLocation
         initialOrigin = frame.origin
-
-        if isNearEdge(mouseLocation) {
-            isResizing = true
-            initialDiameter = frame.width
-            initialCenter = circleCenter
-        } else {
-            isResizing = false
-        }
     }
 
     override func mouseDragged(with e: NSEvent) {
-        guard let im = initialMouse else { return }
+        guard let im = initialMouse, let io = initialOrigin else { return }
         let cm = NSEvent.mouseLocation
-
-        if isResizing {
-            // Calculate distance from initial center to current mouse
-            let dx = cm.x - initialCenter.x
-            let dy = cm.y - initialCenter.y
-            let currentDistance = sqrt(dx * dx + dy * dy)
-
-            // Calculate distance from initial center to initial mouse
-            let idx = im.x - initialCenter.x
-            let idy = im.y - initialCenter.y
-            let initialDistance = sqrt(idx * idx + idy * idy)
-
-            // Scale diameter based on ratio of distances
-            let scale = initialDistance > 0 ? currentDistance / initialDistance : 1
-            let newDiameter = min(max(initialDiameter * scale, Self.minDiameter), Self.maxDiameter)
-
-            // Keep centered
-            let newOrigin = NSPoint(
-                x: initialCenter.x - newDiameter / 2,
-                y: initialCenter.y - newDiameter / 2
-            )
-            let newFrame = NSRect(x: newOrigin.x, y: newOrigin.y, width: newDiameter, height: newDiameter)
-            setFrame(newFrame, display: true)
-            savedDiameter = Double(newDiameter)
-        } else {
-            guard let io = initialOrigin else { return }
-            setFrameOrigin(NSPoint(x: io.x + cm.x - im.x, y: io.y + cm.y - im.y))
-        }
+        setFrameOrigin(NSPoint(x: io.x + cm.x - im.x, y: io.y + cm.y - im.y))
     }
 
     override func mouseUp(with event: NSEvent) {
-        if isResizing {
-            savedDiameter = Double(frame.width)
-        }
-        isResizing = false
         initialMouse = nil
         initialOrigin = nil
-    }
-
-    func applySavedDiameter() {
-        let diameter = CGFloat(savedDiameter)
-        if diameter != frame.width {
-            CameraOverlayWindowController.shared.updateSize(diameter)
-        }
     }
 }

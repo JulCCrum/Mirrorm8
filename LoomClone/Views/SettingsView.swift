@@ -5,7 +5,9 @@ struct SettingsView: View {
     @EnvironmentObject var cameraManager: CameraManager
     @EnvironmentObject var screenCaptureManager: ScreenCaptureManager
     @EnvironmentObject var recordingsManager: RecordingsManager
-    @AppStorage("overlaySize") private var overlaySize = CaptureConfiguration.OverlaySize.medium.rawValue
+    @AppStorage("overlayShape") private var overlayShape = CaptureConfiguration.OverlayShape.circle.rawValue
+    @AppStorage("overlayWidth") private var overlayWidth: Double = 200
+    @AppStorage("overlayHeight") private var overlayHeight: Double = 200
     @AppStorage("videoQuality") private var videoQuality = CaptureConfiguration.VideoQuality.high.rawValue
 
     var body: some View {
@@ -64,9 +66,31 @@ struct SettingsView: View {
                     Button("Refresh Camera List") { cameraManager.refreshCameraList() }
                 }
                 Section("Overlay") {
-                    Picker("Size", selection: $overlaySize) {
-                        ForEach(CaptureConfiguration.OverlaySize.allCases) { Text($0.rawValue).tag($0.rawValue) }
-                    }.onChange(of: overlaySize) { if let s = CaptureConfiguration.OverlaySize(rawValue: $0) { CameraOverlayWindowController.shared.updateSize(s.diameter) } }
+                    Picker("Shape", selection: $overlayShape) {
+                        ForEach(CaptureConfiguration.OverlayShape.allCases) { Text($0.rawValue).tag($0.rawValue) }
+                    }.onChange(of: overlayShape) {
+                        if let s = CaptureConfiguration.OverlayShape(rawValue: $0) {
+                            CameraOverlayWindowController.shared.updateShape(s)
+                            overlayWidth = s.defaultSize.width
+                            overlayHeight = s.defaultSize.height
+                        }
+                    }
+                    HStack {
+                        Text("Width")
+                        Slider(value: $overlayWidth, in: 100...600, step: 10)
+                        Text("\(Int(overlayWidth))px").foregroundColor(.secondary).frame(width: 50)
+                    }.onChange(of: overlayWidth) { _ in
+                        CameraOverlayWindowController.shared.updateFrame(width: overlayWidth, height: overlayHeight)
+                    }
+                    if CaptureConfiguration.OverlayShape(rawValue: overlayShape) == .roundedRect {
+                        HStack {
+                            Text("Height")
+                            Slider(value: $overlayHeight, in: 100...900, step: 10)
+                            Text("\(Int(overlayHeight))px").foregroundColor(.secondary).frame(width: 50)
+                        }.onChange(of: overlayHeight) { _ in
+                            CameraOverlayWindowController.shared.updateFrame(width: overlayWidth, height: overlayHeight)
+                        }
+                    }
                 }
                 Section("Permissions") {
                     HStack { Text("Camera"); Spacer(); Image(systemName: cameraManager.permissionGranted ? "checkmark.circle.fill" : "xmark.circle").foregroundColor(cameraManager.permissionGranted ? .green : .red) }

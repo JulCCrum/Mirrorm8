@@ -18,6 +18,7 @@
 		009 /* ControlPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 109 /* ControlPanelView.swift */; };
 		010 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 110 /* SettingsView.swift */; };
 		011 /* RecordingsListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 111 /* RecordingsListView.swift */; };
+		020 /* EditRecordingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 120 /* EditRecordingView.swift */; };
 		012 /* RecordingsManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 112 /* RecordingsManager.swift */; };
 		013 /* Recording.swift in Sources */ = {isa = PBXBuildFile; fileRef = 113 /* Recording.swift */; };
 		014 /* CaptureConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 114 /* CaptureConfiguration.swift */; };
@@ -37,6 +38,7 @@
 		109 /* ControlPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ControlPanelView.swift; sourceTree = "<group>"; };
 		110 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		111 /* RecordingsListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingsListView.swift; sourceTree = "<group>"; };
+		120 /* EditRecordingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditRecordingView.swift; sourceTree = "<group>"; };
 		112 /* RecordingsManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingsManager.swift; sourceTree = "<group>"; };
 		113 /* Recording.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Recording.swift; sourceTree = "<group>"; };
 		114 /* CaptureConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureConfiguration.swift; sourceTree = "<group>"; };
@@ -94,6 +96,7 @@
 				109 /* ControlPanelView.swift */,
 				110 /* SettingsView.swift */,
 				111 /* RecordingsListView.swift */,
+				120 /* EditRecordingView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -198,6 +201,7 @@
 				009 /* ControlPanelView.swift in Sources */,
 				010 /* SettingsView.swift in Sources */,
 				011 /* RecordingsListView.swift in Sources */,
+				020 /* EditRecordingView.swift in Sources */,
 				012 /* RecordingsManager.swift in Sources */,
 				013 /* Recording.swift in Sources */,
 				014 /* CaptureConfiguration.swift in Sources */,
@@ -335,11 +339,13 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				AUTOMATION_APPLE_EVENTS = NO;
+				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_ENTITLEMENTS = LoomClone/LoomClone.entitlements;
-				CODE_SIGN_STYLE = Automatic;
+				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = "";
 				DEVELOPMENT_ASSET_PATHS = "";
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -380,11 +386,13 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				AUTOMATION_APPLE_EVENTS = NO;
+				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_ENTITLEMENTS = LoomClone/LoomClone.entitlements;
-				CODE_SIGN_STYLE = Automatic;
+				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = "";
 				DEVELOPMENT_ASSET_PATHS = "";
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;

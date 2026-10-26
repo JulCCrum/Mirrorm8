@@ -38,5 +38,17 @@ struct CaptureConfiguration {
     enum OverlayShape: String, CaseIterable, Identifiable {
         case circle = "Circle", roundedRect = "Rounded Rectangle"
         var id: String { rawValue }
+        var defaultSize: CGSize {
+            switch self {
+            case .circle: return CGSize(width: 200, height: 200)
+            case .roundedRect: return CGSize(width: 280, height: 450)
+            }
+        }
+        var cornerRadius: CGFloat {
+            switch self {
+            case .circle: return 0  // Uses ellipse path
+            case .roundedRect: return 24
+            }
+        }
     }
 }

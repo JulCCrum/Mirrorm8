@@ -17,14 +17,14 @@ struct ContentView: View {
                     Button { CameraOverlayWindowController.shared.toggleWindow() } label: { Image(systemName: cameraManager.isRunning ? "video.fill" : "video.slash.fill") }.help("Toggle Camera Overlay")
                     Button { showDisplayPicker = true } label: { Image(systemName: "display") }.help("Select Display")
                 }
-            }.padding().background(Color(nsColor: .windowBackgroundColor))
+            }.padding().padding(.leading, 60).background(Color(nsColor: .windowBackgroundColor))
             Divider()
             TabView(selection: $selectedTab) {
-                VStack(spacing: 24) { ControlPanelView().padding(.top, 20); Spacer() }.tabItem { Label("Record", systemImage: "record.circle") }.tag(0)
+                ScrollView { ControlPanelView().padding(.top, 20).padding(.bottom, 20) }.tabItem { Label("Record", systemImage: "record.circle") }.tag(0)
                 RecordingsListView().tabItem { Label("Library", systemImage: "folder") }.tag(1)
             }.padding()
         }
-        .frame(minWidth: 400, minHeight: 500)
+        .frame(minWidth: 400, minHeight: 620)
         .sheet(isPresented: $showDisplayPicker) { DisplayPickerView(isPresented: $showDisplayPicker).environmentObject(screenCaptureManager) }
         .onAppear { Task { await screenCaptureManager.checkPermissionAndRefresh() } }
     }

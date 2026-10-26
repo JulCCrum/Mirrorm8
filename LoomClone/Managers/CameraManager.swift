@@ -3,6 +3,7 @@ import AVFoundation
 import Combine
 import CoreMedia
 
+@MainActor
 class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleBufferDelegate {
     @Published var availableCameras: [AVCaptureDevice] = []
     @Published var selectedCamera: AVCaptureDevice?
@@ -10,9 +11,9 @@ class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleB
     @Published var permissionGranted = false
     @Published var errorMessage: String?
 
-    private var captureSession: AVCaptureSession?
-    private var currentInput: AVCaptureDeviceInput?
-    private var videoOutput: AVCaptureVideoDataOutput?
+    private nonisolated(unsafe) var captureSession: AVCaptureSession?
+    private nonisolated(unsafe) var currentInput: AVCaptureDeviceInput?
+    private nonisolated(unsafe) var videoOutput: AVCaptureVideoDataOutput?
     private let sessionQueue = DispatchQueue(label: "com.loomclone.camera.session", qos: .userInitiated)
     private let videoOutputQueue = DispatchQueue(label: "com.loomclone.camera.videooutput", qos: .userInitiated)
 
@@ -95,12 +96,15 @@ class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleB
 
     func startSession() {
         guard permissionGranted else { return }
+        // Snapshot @Published main-actor state here on the caller's thread (main)
+        // so the background queue never reads it concurrently with SwiftUI.
+        let camera = selectedCamera
         sessionQueue.async { [weak self] in
             // If session already exists and is running, don't recreate
             if let session = self?.captureSession, session.isRunning {
                 return
             }
-            self?.setupCaptureSession()
+            self?.setupCaptureSession(camera: camera)
         }
     }
 
@@ -111,9 +115,15 @@ class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleB
         }
     }
 
-    private func setupCaptureSession() {
-        // Stop existing session first
-        captureSession?.stopRunning()
+    private nonisolated func setupCaptureSession(camera: AVCaptureDevice?) {
+        // Stop existing session first, then release it on the main thread.
+        // AVCaptureSession's dealloc removes notification observers via CF, which
+        // can crash if it runs on a background queue while SwiftUI is updating.
+        if let oldSession = captureSession {
+            oldSession.stopRunning()
+            captureSession = nil
+            DispatchQueue.main.async { _ = oldSession }
+        }
 
         let session = AVCaptureSession()
         session.beginConfiguration()
@@ -121,7 +131,7 @@ class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleB
         // Use a preset that works well with most cameras including FaceTime
         session.sessionPreset = .medium
 
-        guard let camera = selectedCamera else {
+        guard let camera = camera else {
             DispatchQueue.main.async { [weak self] in self?.errorMessage = "No camera selected" }
             return
         }
@@ -163,12 +173,12 @@ class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleB
     }
 
     // MARK: - AVCaptureVideoDataOutputSampleBufferDelegate
-    func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
+    nonisolated func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
         // We don't need to do anything with the frames for preview
         // But having this delegate keeps the pipeline active
     }
 
-    func captureOutput(_ output: AVCaptureOutput, didDrop sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
+    nonisolated func captureOutput(_ output: AVCaptureOutput, didDrop sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
         // Frames are being dropped - this is fine for preview-only use
     }
 
@@ -242,7 +252,7 @@ class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleB
         }
     }
 
-    func getCaptureSession() -> AVCaptureSession? { return captureSession }
+    nonisolated func getCaptureSession() -> AVCaptureSession? { return captureSession }
 
     deinit {
         NotificationCenter.default.removeObserver(self)

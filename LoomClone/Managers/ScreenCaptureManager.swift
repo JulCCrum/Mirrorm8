@@ -2,6 +2,9 @@ import Foundation
 import ScreenCaptureKit
 import Combine
 import CoreGraphics
+import CoreAudio
+import AVFoundation
+import QuartzCore  // CACurrentMediaTime
 
 @MainActor
 class ScreenCaptureManager: NSObject, ObservableObject {
@@ -15,12 +18,20 @@ class ScreenCaptureManager: NSObject, ObservableObject {
 
     private var stream: SCStream?
     private var streamOutput: CaptureStreamOutput?
+    private var micMonitorEngine: AVAudioEngine?
+    // Throttle audio-meter UI updates. The tap fires ~100/sec; pushing each one to
+    // the main queue floods SwiftUI's update loop and trips view-graph asserts.
+    private var lastMeterUpdate: CFTimeInterval = 0
+    private static let meterUpdateInterval: CFTimeInterval = 1.0 / 30.0  // 30 Hz
     var frameHandler: ((CMSampleBuffer) -> Void)?
     var audioHandler: ((CMSampleBuffer) -> Void)?
 
     override init() {
         super.init()
-        Task { await checkPermissionAndRefresh() }
+        Task {
+            await checkPermissionAndRefresh()
+            startMicMonitor()
+        }
     }
 
     func checkPermissionAndRefresh() async {
@@ -56,6 +67,53 @@ class ScreenCaptureManager: NSObject, ObservableObject {
 
     func refreshDisplays() async { await checkPermissionAndRefresh() }
 
+    func startMicMonitor() {
+        guard micMonitorEngine == nil else { return }
+        let engine = AVAudioEngine()
+        let inputNode = engine.inputNode
+        let format = inputNode.outputFormat(forBus: 0)
+        guard format.sampleRate > 0 else { return }
+        inputNode.installTap(onBus: 0, bufferSize: 512, format: format) { [weak self] buffer, _ in
+            let channelData = buffer.floatChannelData?[0]
+            let frameLength = Int(buffer.frameLength)
+            guard let data = channelData, frameLength > 0 else { return }
+            var sumOfSquares: Float = 0
+            for i in 0..<frameLength { sumOfSquares += data[i] * data[i] }
+            let rms = sqrt(sumOfSquares / Float(frameLength))
+            let level = min(rms * 12, 1.0)
+            // Throttle on the audio thread before hopping to main.
+            let now = CACurrentMediaTime()
+            guard let strongSelf = self,
+                  now - strongSelf.lastMeterUpdate >= Self.meterUpdateInterval
+            else { return }
+            self?.lastMeterUpdate = now
+            // Hop to main via GCD, not `Task { @MainActor }`. Spawning a Swift
+            // Concurrency task from an AVAudioEngine tap (which runs on a CoreAudio
+            // real-time thread) races the executor-introspection path and crashes
+            // in swift_task_isCurrentExecutorWithFlagsImpl under load.
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.audioLevel = level
+                self.audioLevelHistory.append(level)
+                if self.audioLevelHistory.count > 20 {
+                    self.audioLevelHistory.removeFirst()
+                }
+            }
+        }
+        do {
+            try engine.start()
+            micMonitorEngine = engine
+        } catch {
+            print("[MicMonitor] Failed to start: \(error)")
+        }
+    }
+
+    func stopMicMonitor() {
+        micMonitorEngine?.inputNode.removeTap(onBus: 0)
+        micMonitorEngine?.stop()
+        micMonitorEngine = nil
+    }
+
     func startCapture(excludingWindows: [SCWindow] = []) async throws {
         guard let display = selectedDisplay else { throw CaptureError.noDisplaySelected }
         _ = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
@@ -75,15 +133,6 @@ class ScreenCaptureManager: NSObject, ObservableObject {
         let output = CaptureStreamOutput()
         output.frameHandler = frameHandler
         output.audioHandler = audioHandler
-        output.audioLevelHandler = { [weak self] level in
-            Task { @MainActor in
-                self?.audioLevel = level
-                self?.audioLevelHistory.append(level)
-                if (self?.audioLevelHistory.count ?? 0) > 20 {
-                    self?.audioLevelHistory.removeFirst()
-                }
-            }
-        }
         try stream.addStreamOutput(output, type: .screen, sampleHandlerQueue: DispatchQueue(label: "com.loomclone.screen.output"))
         // Only microphone audio (no system audio)
         if #available(macOS 15.0, *) {
@@ -145,17 +194,36 @@ class CaptureStreamOutput: NSObject, SCStreamOutput {
         var length = 0
         var dataPointer: UnsafeMutablePointer<Int8>?
         CMBlockBufferGetDataPointer(blockBuffer, atOffset: 0, lengthAtOffsetOut: nil, totalLengthOut: &length, dataPointerOut: &dataPointer)
-        guard let data = dataPointer else { return nil }
+        guard let data = dataPointer, length > 0 else { return nil }
 
-        // Calculate RMS (root mean square) of audio samples
-        let samples = data.withMemoryRebound(to: Int16.self, capacity: length / 2) { ptr in
-            Array(UnsafeBufferPointer(start: ptr, count: length / 2))
+        // Determine audio format from the sample buffer
+        guard let formatDesc = CMSampleBufferGetFormatDescription(sampleBuffer),
+              let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(formatDesc) else { return nil }
+
+        let rms: Double
+        if asbd.pointee.mFormatFlags & kAudioFormatFlagIsFloat != 0 {
+            // Float32 samples (typical for ScreenCaptureKit microphone output)
+            let sampleCount = length / MemoryLayout<Float32>.size
+            guard sampleCount > 0 else { return nil }
+            let sumOfSquares = data.withMemoryRebound(to: Float32.self, capacity: sampleCount) { ptr in
+                var sum = 0.0
+                for i in 0..<sampleCount { sum += Double(ptr[i]) * Double(ptr[i]) }
+                return sum
+            }
+            rms = sqrt(sumOfSquares / Double(sampleCount))
+        } else {
+            // Int16 samples (fallback)
+            let sampleCount = length / MemoryLayout<Int16>.size
+            guard sampleCount > 0 else { return nil }
+            let sumOfSquares = data.withMemoryRebound(to: Int16.self, capacity: sampleCount) { ptr in
+                var sum = 0.0
+                for i in 0..<sampleCount { sum += Double(ptr[i]) * Double(ptr[i]) }
+                return sum
+            }
+            rms = sqrt(sumOfSquares / Double(sampleCount)) / 32768.0
         }
-        guard !samples.isEmpty else { return nil }
 
-        let sumOfSquares = samples.reduce(0.0) { $0 + Double($1) * Double($1) }
-        let rms = sqrt(sumOfSquares / Double(samples.count))
-        let level = Float(rms / 32768.0)  // Normalize to 0-1
-        return min(level * 3, 1.0)  // Amplify for better visibility, cap at 1.0
+        let level = Float(rms)
+        return min(level * 12, 1.0)  // Amplify for better visibility, cap at 1.0
     }
 }

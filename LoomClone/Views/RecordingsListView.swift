@@ -6,6 +6,7 @@ struct RecordingsListView: View {
     @State private var selectedRecording: Recording?
     @State private var showDeleteConfirmation = false
     @State private var recordingToDelete: Recording?
+    @State private var recordingToEdit: Recording?
     @State private var searchText = ""
 
     var filteredRecordings: [Recording] {
@@ -34,11 +35,13 @@ struct RecordingsListView: View {
             } else {
                 List(selection: $selectedRecording) {
                     ForEach(filteredRecordings) { recording in
-                        RecordingRow(recording: recording).tag(recording)
+                        RecordingRow(recording: recording, onEdit: { recordingToEdit = recording })
+                            .tag(recording)
                             .contextMenu {
                                 if recording.isAvailable {
                                     Button("Play") { recordingsManager.openRecording(recording) }
                                     Button("Show in Finder") { recordingsManager.openInFinder(recording) }
+                                    Button("Edit with vidcut…") { recordingToEdit = recording }
                                 }
                                 Divider()
                                 Button("Delete", role: .destructive) { recordingToDelete = recording; showDeleteConfirmation = true }
@@ -51,12 +54,16 @@ struct RecordingsListView: View {
             Button("Delete", role: .destructive) { recordingsManager.deleteRecording(r) }
             Button("Cancel", role: .cancel) {}
         } message: { Text("Delete '\($0.filename)'? This cannot be undone.") }
+        .sheet(item: $recordingToEdit) { recording in
+            EditRecordingView(recording: recording)
+        }
         .onAppear { recordingsManager.loadRecordings() }
     }
 }
 
 struct RecordingRow: View {
     let recording: Recording
+    var onEdit: (() -> Void)? = nil
     @State private var thumbnail: NSImage?
     @EnvironmentObject var recordingsManager: RecordingsManager
 
@@ -92,6 +99,11 @@ struct RecordingRow: View {
                 HStack(spacing: 8) {
                     Button { recordingsManager.openRecording(recording) } label: { Image(systemName: "play.fill") }.buttonStyle(.borderless)
                     Button { recordingsManager.openInFinder(recording) } label: { Image(systemName: "folder") }.buttonStyle(.borderless)
+                    if let onEdit = onEdit {
+                        Button { onEdit() } label: { Image(systemName: "scissors") }
+                            .buttonStyle(.borderless)
+                            .help("Edit with vidcut — insert typewriter title cards")
+                    }
                 }
             } else {
                 Image(systemName: "externaldrive.trianglebadge.exclamationmark")

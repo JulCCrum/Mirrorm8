@@ -17,13 +17,18 @@ struct LoomCloneApp: App {
                 .environmentObject(recordingCoordinator)
                 .environmentObject(recordingsManager)
                 .onAppear {
-                    recordingCoordinator.setup(
-                        cameraManager: cameraManager,
-                        screenCaptureManager: screenCaptureManager,
-                        recordingsManager: recordingsManager
-                    )
-                    if showOverlay {
-                        CameraOverlayWindowController.shared.showWindow(cameraManager: cameraManager)
+                    // Defer to the next runloop so we don't create an NSPanel
+                    // while SwiftUI is mid-update (caused launch crashes in
+                    // swift_task_isMainExecutorImpl during Update.dispatchActions).
+                    DispatchQueue.main.async {
+                        recordingCoordinator.setup(
+                            cameraManager: cameraManager,
+                            screenCaptureManager: screenCaptureManager,
+                            recordingsManager: recordingsManager
+                        )
+                        if showOverlay {
+                            CameraOverlayWindowController.shared.showWindow(cameraManager: cameraManager)
+                        }
                     }
                 }
         }

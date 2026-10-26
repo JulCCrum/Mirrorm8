@@ -8,6 +8,9 @@ struct ControlPanelView: View {
     @EnvironmentObject var recordingCoordinator: RecordingCoordinator
     @EnvironmentObject var recordingsManager: RecordingsManager
     @State private var countdown: Int? = nil
+    @AppStorage("overlayShape") private var overlayShape = CaptureConfiguration.OverlayShape.circle.rawValue
+    @AppStorage("overlayWidth") private var overlayWidth: Double = 200
+    @AppStorage("overlayHeight") private var overlayHeight: Double = 200
 
     var body: some View {
         VStack(spacing: 24) {
@@ -53,8 +56,44 @@ struct ControlPanelView: View {
                     Image(systemName: "mic.fill").foregroundColor(.secondary).frame(width: 24)
                     Text("Microphone").foregroundColor(.secondary)
                     Spacer()
-                    AudioWaveformView(levels: screenCaptureManager.audioLevelHistory)
-                        .frame(width: 160, height: 36)
+                    // TEMP DISABLED for crash bisection - see if launch crash goes away
+                    // AudioWaveformView(levels: screenCaptureManager.audioLevelHistory)
+                    //     .frame(width: 160, height: 30)
+                    Color.clear.frame(width: 160, height: 30)
+                }
+            }.padding().background(RoundedRectangle(cornerRadius: 12).fill(Color(nsColor: .controlBackgroundColor)))
+
+            VStack(spacing: 12) {
+                HStack {
+                    Image(systemName: "person.crop.rectangle").foregroundColor(.secondary).frame(width: 24)
+                    Text("Overlay").foregroundColor(.secondary)
+                    Spacer()
+                    Picker("", selection: $overlayShape) {
+                        ForEach(CaptureConfiguration.OverlayShape.allCases) { Text($0.rawValue).tag($0.rawValue) }
+                    }.labelsHidden().frame(width: 160)
+                    .onChange(of: overlayShape) {
+                        if let s = CaptureConfiguration.OverlayShape(rawValue: $0) {
+                            CameraOverlayWindowController.shared.updateShape(s)
+                            overlayWidth = s.defaultSize.width
+                            overlayHeight = s.defaultSize.height
+                        }
+                    }
+                }
+                HStack {
+                    Text("Width").foregroundColor(.secondary).frame(width: 45, alignment: .leading)
+                    Slider(value: $overlayWidth, in: 100...600)
+                    Text("\(Int(overlayWidth))").foregroundColor(.secondary).frame(width: 35)
+                }.onChange(of: overlayWidth) { _ in
+                    CameraOverlayWindowController.shared.updateFrame(width: overlayWidth, height: overlayHeight)
+                }
+                if CaptureConfiguration.OverlayShape(rawValue: overlayShape) == .roundedRect {
+                    HStack {
+                        Text("Height").foregroundColor(.secondary).frame(width: 45, alignment: .leading)
+                        Slider(value: $overlayHeight, in: 100...900)
+                        Text("\(Int(overlayHeight))").foregroundColor(.secondary).frame(width: 35)
+                    }.onChange(of: overlayHeight) { _ in
+                        CameraOverlayWindowController.shared.updateFrame(width: overlayWidth, height: overlayHeight)
+                    }
                 }
             }.padding().background(RoundedRectangle(cornerRadius: 12).fill(Color(nsColor: .controlBackgroundColor)))
 
@@ -86,18 +125,10 @@ struct AudioWaveformView: View {
     var body: some View {
         HStack(alignment: .center, spacing: 2) {
             ForEach(Array(levels.enumerated()), id: \.offset) { _, level in
-                VStack(spacing: 1) {
-                    // Upper bars (main)
-                    RoundedRectangle(cornerRadius: 1.5)
-                        .fill(barColor(for: level))
-                        .frame(width: 5, height: max(2, CGFloat(level) * 18))
-                        .animation(.spring(response: 0.15, dampingFraction: 0.7), value: level)
-                    // Lower bars (reflection)
-                    RoundedRectangle(cornerRadius: 1.5)
-                        .fill(barColor(for: level).opacity(0.3))
-                        .frame(width: 5, height: max(1, CGFloat(level) * 8))
-                        .animation(.spring(response: 0.15, dampingFraction: 0.7), value: level)
-                }
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(barColor(for: level))
+                    .frame(width: 6, height: max(3, CGFloat(level) * 28))
+                    .animation(.linear(duration: 0.02), value: level)
             }
         }
     }
